@@ -101,7 +101,8 @@ export class OortStorageClient {
   }
 
   async putObject(bucketName: string, objectKey: string, data: Buffer): Promise<void> {
-    await this.request('PUT', `/${bucketName}/${objectKey}`, { 'Content-Length': data.length.toString() }, data);
+    const response = await this.request('PUT', `/${bucketName}/${objectKey}`, { 'Content-Length': data.length.toString() }, data);
+    console.log('PUT object response:', response);
   }
 
   async getObject(bucketName: string, objectKey: string): Promise<Buffer> {
@@ -110,6 +111,30 @@ export class OortStorageClient {
 
   async deleteObject(bucketName: string, objectKey: string): Promise<void> {
     await this.request('DELETE', `/${bucketName}/${objectKey}`);
+  }
+
+  async deleteAllObjectsInBucket(bucketName: string): Promise<void> {
+    let continuationToken: string | undefined;
+    do {
+      const listResult = await this.listObjectsV2(bucketName, undefined, continuationToken);
+      if (listResult.Contents) {
+        const objectInfos = Array.isArray(listResult.Contents) 
+          ? listResult.Contents 
+          : [listResult.Contents];
+
+        for (const objectInfo of objectInfos) {
+          await this.deleteObject(bucketName, objectInfo.Key);
+          console.log(`Deleted object ${objectInfo.Key} from ${bucketName}`);
+        }
+      }
+      continuationToken = listResult.NextContinuationToken;
+    } while (continuationToken);
+  }
+
+  async deleteBucket(bucketName: string): Promise<void> {
+    await this.deleteAllObjectsInBucket(bucketName);
+    await this.request('DELETE', `/${bucketName}`);
+    console.log(`Deleted bucket: ${bucketName}`);
   }
 
   async createMultipartUpload(bucketName: string, objectKey: string): Promise<MultipartUploadInfo> {

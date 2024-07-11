@@ -13,7 +13,7 @@ export interface Bucket {
 }
 
 export interface ListObjectsV2Response {
-  Contents: ObjectInfo[];
+  Contents: ObjectInfo[] | ObjectInfo | undefined;
   Name: string;
   Prefix: string;
   KeyCount: number;
