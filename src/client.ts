@@ -53,6 +53,56 @@ export class OortStorageClient {
       Authorization: `AWS4-HMAC-SHA256 Credential=${this.config.accessKeyId}/${date}/${region}/s3/aws4_request, SignedHeaders=${Object.keys(headers).sort().join(';').toLowerCase()}, Signature=${signature}`
     };
   }
+  private getSigningKey(dateStamp: string): Buffer {
+    const kDate = createHmac('sha256', `AWS4${this.config.secretAccessKey}`).update(dateStamp).digest();
+    const kRegion = createHmac('sha256', kDate).update(this.config.region || 'us-east-1').digest();
+    const kService = createHmac('sha256', kRegion).update('s3').digest();
+    return createHmac('sha256', kService).update('aws4_request').digest();
+  }
+
+  getSignedUrl(operation: string, params: Record<string, string>, expiresIn: number = 900): string {
+    const timestamp = new Date();
+    const dateString = timestamp.toISOString().slice(0, 8).replace(/-/g, '');
+    
+    const credential = `${this.config.accessKeyId}/${dateString}/${this.config.region || 'us-east-1'}/s3/aws4_request`;
+    
+    const signedHeaders = 'host';
+    
+    const canonicalQuerystring = Object.entries({
+      ...params,
+      'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+      'X-Amz-Credential': credential,
+      'X-Amz-Date': timestamp.toISOString().replace(/[:-]|\.\d{3}/g, ''),
+      'X-Amz-Expires': expiresIn.toString(),
+      'X-Amz-SignedHeaders': signedHeaders
+    })
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+    
+    const canonicalRequest = [
+      operation,
+      `/${params.Key || ''}`,
+      canonicalQuerystring,
+      `host:${new URL(this.endpoint).host}\n`,
+      '',
+      signedHeaders,
+      'UNSIGNED-PAYLOAD'
+    ].join('\n');
+    
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      timestamp.toISOString().replace(/[:-]|\.\d{3}/g, ''),
+      `${dateString}/${this.config.region || 'us-east-1'}/s3/aws4_request`,
+      createHmac('sha256', '').update(canonicalRequest).digest('hex')
+    ].join('\n');
+    
+    const signingKey = this.getSigningKey(dateString);
+    const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+    
+    return `${this.endpoint}/${params.Key || ''}?${canonicalQuerystring}&X-Amz-Signature=${signature}`;
+  }
+
 
   private async request(method: string, path: string, headers: Record<string, string> = {}, body?: any): Promise<any> {
     const signedHeaders = await this.signRequest(method, path, {
@@ -78,6 +128,11 @@ export class OortStorageClient {
     } catch (error) {
       throw new Error(`OORT Storage Error: ${(error as Error).message}`);
     }
+  }
+  async copyObject(sourceBucket: string, sourceKey: string, destBucket: string, destKey: string): Promise<void> {
+    await this.request('PUT', `/${destBucket}/${destKey}`, {
+      'x-amz-copy-source': `/${sourceBucket}/${sourceKey}`
+    });
   }
 
   async createBucket(bucketName: string): Promise<void> {
@@ -112,6 +167,14 @@ export class OortStorageClient {
   async deleteObject(bucketName: string, objectKey: string): Promise<void> {
     await this.request('DELETE', `/${bucketName}/${objectKey}`);
   }
+  async deleteObjects(bucketName: string, keys: string[]): Promise<void> {
+    const body = `
+      <Delete>
+        ${keys.map(key => `<Object><Key>${key}</Key></Object>`).join('')}
+      </Delete>
+    `;
+    await this.request('POST', `/${bucketName}?delete`, { 'Content-Type': 'application/xml' }, body);
+  }
 
   async deleteAllObjectsInBucket(bucketName: string): Promise<void> {
     let continuationToken: string | undefined;
@@ -144,11 +207,39 @@ export class OortStorageClient {
       Key: response.InitiateMultipartUploadResult.Key
     };
   }
+  async abortMultipartUpload(bucketName: string, objectKey: string, uploadId: string): Promise<void> {
+    await this.request('DELETE', `/${bucketName}/${objectKey}?uploadId=${uploadId}`);
+  }
+
 
   async uploadPart(bucketName: string, objectKey: string, uploadId: string, partNumber: number, data: Buffer): Promise<string> {
     const response = await this.request('PUT', `/${bucketName}/${objectKey}?partNumber=${partNumber}&uploadId=${uploadId}`, { 'Content-Length': data.length.toString() }, data);
     return response.headers['etag'];
   }
+
+  async uploadPartCopy(
+    sourceBucket: string,
+    sourceKey: string,
+    destBucket: string,
+    destKey: string,
+    uploadId: string,
+    partNumber: number,
+    startByte: number,
+    endByte: number
+  ): Promise<string> {
+    const response = await this.request('PUT', `/${destBucket}/${destKey}?partNumber=${partNumber}&uploadId=${uploadId}`, {
+      'x-amz-copy-source': `/${sourceBucket}/${sourceKey}`,
+      'x-amz-copy-source-range': `bytes=${startByte}-${endByte}`
+    });
+  
+    if (response && response.CopyPartResult && response.CopyPartResult.ETag) {
+      return response.CopyPartResult.ETag.replace(/"/g, '');
+    }
+  
+    console.error('Unexpected response format:', response);
+    throw new Error('Failed to get ETag from uploadPartCopy response');
+  }
+  
 
   async completeMultipartUpload(bucketName: string, objectKey: string, uploadId: string, parts: CompletedPart[]): Promise<void> {
     const body = `<CompleteMultipartUpload>${parts.map(part => `<Part><PartNumber>${part.PartNumber}</PartNumber><ETag>${part.ETag}</ETag></Part>`).join('')}</CompleteMultipartUpload>`;

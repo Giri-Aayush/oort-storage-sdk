@@ -29,8 +29,15 @@ async function testDeleteObjects() {
 
     console.log('Verifying object deletion...');
     const remainingObjects = await client.listObjectsV2(testBucketName);
-    if (remainingObjects.Contents && remainingObjects.Contents.length > 0) {
-      console.error('Error: Some objects still exist');
+    if (remainingObjects.Contents) {
+      const objectInfos = Array.isArray(remainingObjects.Contents) 
+        ? remainingObjects.Contents 
+        : [remainingObjects.Contents];
+      if (objectInfos.length > 0) {
+        console.error('Error: Some objects still exist');
+      } else {
+        console.log('All objects successfully deleted');
+      }
     } else {
       console.log('All objects successfully deleted');
     }

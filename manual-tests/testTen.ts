@@ -1,7 +1,7 @@
 // This test file is for testing the Multipart Upload functionality (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload)
 
 import dotenv from 'dotenv';
-import { OortStorageClient } from '../src';
+import { CompletedPart, OortStorageClient } from '../src';
 import { createReadStream } from 'fs';
 import { basename } from 'path';
 
@@ -28,7 +28,7 @@ async function testMultipartUpload() {
     const partSize = 5 * 1024 * 1024; // 5MB part size
     const fileStream = createReadStream(testFilePath);
     let partNumber = 1;
-    const uploadedParts = [];
+    const uploadedParts: CompletedPart[] = [];
 
     for await (const chunk of fileStream) {
       console.log(`Uploading part ${partNumber}`);

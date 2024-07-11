@@ -2,6 +2,7 @@
 
 import dotenv from 'dotenv';
 import { OortStorageClient } from '../src';
+import { CompletedPart } from '../src/types';
 
 dotenv.config();
 
@@ -22,24 +23,24 @@ async function testUploadPartCopy() {
     await client.createBucket(sourceBucketName);
     await client.createBucket(destBucketName);
 
-    // Create a large object in the source bucket
     const largeObjectContent = Buffer.alloc(10 * 1024 * 1024, 'a'); // 10MB object
+    console.log(`Putting large object (${largeObjectContent.length} bytes) into source bucket`);
     await client.putObject(sourceBucketName, sourceObjectKey, largeObjectContent);
 
-    // Initiate multipart upload in the destination bucket
+    console.log('Initiating multipart upload');
     const { UploadId } = await client.createMultipartUpload(destBucketName, destObjectKey);
+    console.log(`UploadId: ${UploadId}`);
 
-    // Perform UploadPartCopy
     const partSize = 5 * 1024 * 1024; // 5MB part size
     const numParts = Math.ceil(largeObjectContent.length / partSize);
-    const uploadedParts = [];
+    const uploadedParts: CompletedPart[] = [];
 
     for (let i = 0; i < numParts; i++) {
       const startByte = i * partSize;
       const endByte = Math.min((i + 1) * partSize - 1, largeObjectContent.length - 1);
       const partNumber = i + 1;
 
-      console.log(`Copying part ${partNumber}`);
+      console.log(`Copying part ${partNumber} (bytes ${startByte}-${endByte})`);
       const partETag = await client.uploadPartCopy(
         sourceBucketName,
         sourceObjectKey,
@@ -50,15 +51,16 @@ async function testUploadPartCopy() {
         startByte,
         endByte
       );
+      console.log(`Successfully copied part ${partNumber}, ETag: ${partETag}`);
       uploadedParts.push({ PartNumber: partNumber, ETag: partETag });
     }
 
-    // Complete the multipart upload
+    console.log('Completing multipart upload');
     await client.completeMultipartUpload(destBucketName, destObjectKey, UploadId, uploadedParts);
 
     console.log('UploadPartCopy completed successfully');
 
-    // Verify the copied object
+    console.log('Verifying copied object');
     const copiedObject = await client.getObject(destBucketName, destObjectKey);
     console.log('Copied object size:', copiedObject.length);
 
@@ -67,6 +69,11 @@ async function testUploadPartCopy() {
     await client.deleteBucket(destBucketName);
   } catch (error) {
     console.error('An error occurred:', error);
+    if (error instanceof Error) {
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
   }
 }
 
