@@ -12,8 +12,18 @@ export interface Bucket {
   CreationDate: string;
 }
 
+// export interface ListObjectsV2Response {
+//   Contents: ObjectInfo[] | undefined;
+//   Name: string;
+//   Prefix: string;
+//   KeyCount: number;
+//   MaxKeys: number;
+//   IsTruncated: boolean;
+//   NextContinuationToken?: string;
+// }
+
 export interface ListObjectsV2Response {
-  Contents: ObjectInfo[] | ObjectInfo | undefined;
+  Contents?: ObjectInfo[];
   Name: string;
   Prefix: string;
   KeyCount: number;
@@ -42,4 +52,19 @@ export interface MultipartUploadInfo {
 export interface CompletedPart {
   ETag: string;
   PartNumber: number;
+}
+
+
+
+/////
+export interface ListBucketsResponse {
+  ListAllMyBucketsResult: {
+    Owner: {
+      ID: string;
+      DisplayName: string;
+    };
+    Buckets: {
+      Bucket: Bucket[];
+    };
+  };
 }
