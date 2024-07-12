@@ -5,3 +5,4 @@ npx ts-node manual-tests/testListObjects.ts
 npx ts-node manual-tests/testGetObject.ts
 npx ts-node manual-tests/testPutObject.ts
 npx ts-node manual-tests/testCopyObject.ts
+npx ts-node manual-tests/testDeleteObject.ts
