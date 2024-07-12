@@ -2,3 +2,6 @@ npx ts-node manual-tests/testCreateBucket.ts
 npx ts-node manual-tests/testListBuckets.ts
 npx ts-node manual-tests/testDeleteBucket.ts
 npx ts-node manual-tests/testListObjects.ts
+npx ts-node manual-tests/testGetObject.ts
+npx ts-node manual-tests/testPutObject.ts
+npx ts-node manual-tests/testCopyObject.ts

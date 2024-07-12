@@ -227,7 +227,14 @@ export class OortStorageClient {
   }
 
   async getObject(bucketName: string, objectKey: string): Promise<Buffer> {
-    return await this.request('GET', `/${bucketName}/${objectKey}`);
+    const response = await this.request('GET', `/${bucketName}/${objectKey}`);
+    if (Buffer.isBuffer(response.data)) {
+      return response.data;
+    } else if (typeof response.data === 'string') {
+      return Buffer.from(response.data);
+    } else {
+      throw new Error('Unexpected response format from getObject');
+    }
   }
 
   async deleteObject(bucketName: string, objectKey: string): Promise<void> {
