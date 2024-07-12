@@ -346,11 +346,11 @@ export class OortStorageClient {
       'x-amz-copy-source': `/${sourceBucket}/${sourceKey}`,
       'x-amz-copy-source-range': `bytes=${startByte}-${endByte}`,
     });
-
-    if (response && response.CopyPartResult && response.CopyPartResult.ETag) {
-      return response.CopyPartResult.ETag.replace(/"/g, '');
+  
+    if (response && response.data && response.data.CopyPartResult && response.data.CopyPartResult.ETag) {
+      return response.data.CopyPartResult.ETag.replace(/"/g, '');
     }
-
+  
     console.error('Unexpected response format:', response);
     throw new Error('Failed to get ETag from uploadPartCopy response');
   }

@@ -4,7 +4,20 @@ import { CompletedPart } from '../src/types';
 
 dotenv.config();
 
+/**
+ * This test function demonstrates the functionality of multipart upload
+ * using the OortStorageClient. It performs the following steps:
+ * 1. Initializes the OortStorageClient with credentials
+ * 2. Creates a new test bucket
+ * 3. Initiates a multipart upload for a large object
+ * 4. Uploads the object in multiple parts
+ * 5. Completes the multipart upload
+ * 6. Cleans up by deleting the test bucket
+ */
 async function testMultipartUpload() {
+  console.log('Starting MultipartUpload functionality test');
+
+  // Step 1: Initialize the OortStorageClient with necessary credentials
   const client = new OortStorageClient({
     accessKeyId: process.env.OORT_ACCESS_KEY_ID!,
     secretAccessKey: process.env.OORT_SECRET_ACCESS_KEY!,
@@ -15,14 +28,18 @@ async function testMultipartUpload() {
   const objectKey = 'large-object.txt';
 
   try {
-    console.log(`Creating test bucket: ${bucketName}`);
+    // Step 2: Create a new test bucket
+    console.log(`Step 2: Creating test bucket: ${bucketName}`);
     await client.createBucket(bucketName);
 
+    // Step 3: Initiate a multipart upload for a large object
     const largeObjectContent = Buffer.alloc(10 * 1024 * 1024, 'a'); // 10MB object
-    console.log(`Initiating multipart upload`);
+    console.log(`Step 3: Initiating multipart upload`);
     const { UploadId } = await client.createMultipartUpload(bucketName, objectKey);
     console.log(`Upload ID: ${UploadId}`);
 
+    // Step 4: Upload the object in multiple parts
+    console.log('Step 4: Uploading object parts');
     const partSize = 5 * 1024 * 1024; // 5MB part size
     const numParts = Math.ceil(largeObjectContent.length / partSize);
     const uploadedParts: CompletedPart[] = [];
@@ -49,20 +66,29 @@ async function testMultipartUpload() {
       }
     }
 
-    console.log('Completing multipart upload');
+    // Step 5: Complete the multipart upload
+    console.log('Step 5: Completing multipart upload');
     await client.completeMultipartUpload(bucketName, objectKey, UploadId, uploadedParts);
     console.log('Multipart upload completed successfully');
+
+    // Wait for 10 seconds to ensure the upload is fully processed
     await new Promise((resolve) => setTimeout(resolve, 10000));
-    console.log('Cleaning up: deleting bucket', bucketName);
+
+    // Step 6: Clean up
+    console.log(`Step 6: Cleaning up - deleting bucket ${bucketName}`);
     await client.deleteBucket(bucketName);
+    console.log('Cleanup completed successfully');
+
   } catch (error) {
-    console.error('An error occurred:', error);
+    console.error('An error occurred during the MultipartUpload test:', error);
     if (typeof error === 'object' && error !== null) {
       console.error('Error name:', (error as Error).name);
       console.error('Error message:', (error as Error).message);
       console.error('Error stack:', (error as Error).stack);
     }
   }
+
+  console.log('MultipartUpload functionality test completed');
 }
 
 testMultipartUpload();

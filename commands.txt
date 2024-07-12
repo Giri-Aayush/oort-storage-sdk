@@ -7,3 +7,5 @@ npx ts-node manual-tests/testPutObject.ts
 npx ts-node manual-tests/testCopyObject.ts
 npx ts-node manual-tests/testDeleteObject.ts
 npx ts-node manual-tests/testDeleteObjects.ts
+npx ts-node manual-tests/testMultipartUpload.ts
+npx ts-node manual-tests/testUploadPartCopy.ts

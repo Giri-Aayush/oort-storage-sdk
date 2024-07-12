@@ -16,7 +16,7 @@ fi
 
 # Function to print a separator line
 print_separator() {
-    echo -e "\n${GREEN}----------------------------------------${NC}"
+    echo -e "\n${GREEN}------------------------------------------------------------------------${NC}"
 }
 
 # Read and execute each test command from the file
