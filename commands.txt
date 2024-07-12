@@ -10,3 +10,4 @@ npx ts-node manual-tests/testDeleteObjects.ts
 npx ts-node manual-tests/testMultipartUpload.ts
 npx ts-node manual-tests/testUploadPartCopy.ts
 npx ts-node manual-tests/testGetSignedUrlAwsSdk.ts
+npx ts-node manual-tests/testBasicOperations.ts

@@ -275,8 +275,10 @@ export class OortStorageClient {
     } while (continuationToken);
   }
 
-  async deleteBucket(bucketName: string): Promise<void> {
-    await this.deleteAllObjectsInBucket(bucketName);
+  async deleteBucket(bucketName: string, options?: { force?: boolean }): Promise<void> {
+    if (options?.force) {
+      await this.deleteAllObjectsInBucket(bucketName);
+    }
     await this.request('DELETE', `/${bucketName}`);
     console.log(`Deleted bucket: ${bucketName}`);
   }
