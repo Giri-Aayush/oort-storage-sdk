@@ -1,63 +1,131 @@
-// This test file is for testing the GetSignedUrl functionality
+/* This test case is designed to verify the functionality of signed URLs with OORT Storage's S3-compatible API.
+ * It performs the following steps:
+ * 1. Initializes an S3Client with OORT Storage credentials and endpoint.
+ * 2. Lists existing buckets to verify connectivity.
+ * 3. Creates a new test bucket.
+ * 4. Lists buckets again to confirm the new bucket was created.
+ * 5. Uploads a test object to the new bucket.
+ * 6. Generates a signed URL for getting the uploaded object.
+ * 7. Attempts to access the object using the signed URL.
+ * 8. Logs the results of each step, including any errors encountered.
+ * 
+ * This test helps identify any discrepancies between the AWS SDK's behavior
+ * and our custom OortStorageClient implementation, particularly in how
+ * signed URLs are generated and used.
+ */
 
 import dotenv from 'dotenv';
-import { OortStorageClient } from '../src';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  ListBucketsCommand,
+  CreateBucketCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl as s3GetSignedUrl } from '@aws-sdk/s3-request-presigner';
 import axios from 'axios';
 
 dotenv.config();
 
 async function testGetSignedUrl() {
-  const client = new OortStorageClient({
-    accessKeyId: process.env.OORT_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.OORT_SECRET_ACCESS_KEY!,
-    endpointType: 'STANDARD',
-  });
+  console.log('Starting testGetSignedUrl with AWS SDK');
 
-  const testBucketName = 'test-signed-url-' + Date.now();
+  // DIFFICULTY 1: Our custom implementation doesn't use the AWS SDK directly,
+  // which might lead to inconsistencies in how requests are signed and sent.
+  const client = new S3Client({
+    region: 'us-east-1', // Ensure this matches your OORT Storage region
+    endpoint: 'https://s3-standard.oortech.com',
+    credentials: {
+      accessKeyId: process.env.OORT_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.OORT_SECRET_ACCESS_KEY!,
+    },
+    forcePathStyle: true,
+  }); // This might be necessary for S3-compatible storage
+
+  const bucketName = 'test-signed-url-' + Date.now();
   const objectKey = 'test-object.txt';
   const objectContent = 'This is a test object for signed URL';
 
   try {
-    console.log(`Creating test bucket: ${testBucketName}`);
-    await client.createBucket(testBucketName);
+    console.log('Listing existing buckets:');
+    const listBucketsResponse = await client.send(new ListBucketsCommand({}));
+    console.log(JSON.stringify(listBucketsResponse.Buckets, null, 2));
 
-    console.log(`Putting object ${objectKey} into bucket ${testBucketName}`);
-    await client.putObject(testBucketName, objectKey, Buffer.from(objectContent));
+    console.log(`Creating test bucket: ${bucketName}`);
+    // DIFFICULTY 2: Our custom implementation uses a different method to put objects,
+    // which might not be fully compatible with OORT Storage's expectations.
+    try {
+      const createBucketResponse = await client.send(
+        new CreateBucketCommand({ Bucket: bucketName }),
+      );
+      console.log('Bucket created successfully:', createBucketResponse);
+    } catch (createError: any) {
+      console.error('Error creating bucket:', createError.message);
+      if (createError.$metadata) {
+        console.error('Error metadata:', JSON.stringify(createError.$metadata, null, 2));
+      }
+      throw createError; // Re-throw to stop execution
+    }
 
-    // Get signed URL for GET operation
+    console.log('Listing buckets after creation:');
+    const listBucketsAfterResponse = await client.send(new ListBucketsCommand({}));
+    console.log(JSON.stringify(listBucketsAfterResponse.Buckets, null, 2));
+
+    console.log(`Putting object ${objectKey} into bucket ${bucketName}`);
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey,
+        Body: objectContent,
+      }),
+    );
+    console.log('Object put successfully');
+
     console.log('Generating signed URL for GET operation');
-    const getSignedUrl = client.getSignedUrl('GET', { Bucket: testBucketName, Key: objectKey });
-    console.log('GET Signed URL:', getSignedUrl);
-
-    // Test the GET signed URL
-    console.log('Testing GET signed URL');
-    const getResponse = await axios.get(getSignedUrl);
-    console.log('GET response:', getResponse.data);
-
-    // Get signed URL for PUT operation
-    console.log('Generating signed URL for PUT operation');
-    const putSignedUrl = client.getSignedUrl('PUT', { Bucket: testBucketName, Key: 'new-object.txt' });
-    console.log('PUT Signed URL:', putSignedUrl);
-
-    // Test the PUT signed URL
-    console.log('Testing PUT signed URL');
-    const newContent = 'This is a new object uploaded via signed URL';
-    const putResponse = await axios.put(putSignedUrl, newContent, {
-      headers: { 'Content-Type': 'text/plain' }
+    // DIFFICULTY 3: Our custom getSignedUrl implementation might not be creating
+    // the signed URL in exactly the same way as the AWS SDK, leading to authentication issues.
+    const command = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
     });
-    console.log('PUT response status:', putResponse.status);
+    const signedUrl = await s3GetSignedUrl(client, command, { expiresIn: 3600 });
+    console.log('GET Signed URL:', signedUrl);
 
-    // Verify the new object
-    const newObject = await client.getObject(testBucketName, 'new-object.txt');
-    console.log('New object content:', newObject.toString());
+    console.log('Testing GET signed URL');
+    try {
+      const getResponse = await axios.get(signedUrl);
+      console.log('GET response:', getResponse.data);
+    } catch (error: any) {
+      console.error('Error accessing signed URL:', error.message);
+      if (axios.isAxiosError(error) && error.response) {
+        console.error('Signed URL error response:', error.response.data);
+        console.error('Signed URL error status:', error.response.status);
+        console.error('Signed URL error headers:', error.response.headers);
+      }
+    }
 
-    console.log(`Cleaning up: deleting bucket ${testBucketName}`);
-    await client.deleteBucket(testBucketName);
-
-    console.log('GetSignedUrl test completed successfully');
-  } catch (error) {
-    console.error('An error occurred:', error);
+    console.log('GetSignedUrl test completed');
+  } catch (error: any) {
+    console.error('An error occurred:', error.message);
+    if (error.$metadata) {
+      console.error('Error metadata:', JSON.stringify(error.$metadata, null, 2));
+    }
   }
 }
 
 testGetSignedUrl();
+
+// DIFFICULTY 4: Our custom implementation might not be handling all the necessary
+// S3 operations (like creating buckets, listing objects, etc.) in a way that's
+// fully compatible with OORT Storage's S3-compatible API.
+
+// DIFFICULTY 5: Error handling and response parsing in our custom implementation
+// might not be as robust as the AWS SDK, leading to difficulties in diagnosing issues.
+
+// Future improvements:
+// 1. Consider using the AWS SDK directly in our OortStorageClient class
+// 2. If custom implementation is necessary, ensure it exactly mimics AWS SDK behavior
+// 3. Implement comprehensive error handling and logging
+// 4. Thoroughly test each S3 operation against OORT Storage to ensure compatibility
+// 5. Consider reaching out to OORT Storage support for any specific requirements
+//    or deviations from standard S3 behavior

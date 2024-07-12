@@ -22,6 +22,10 @@ export interface ListObjectsV2Response {
   NextContinuationToken?: string;
 }
 
+export interface SignedUrlOptions {
+  expiresIn: number; // in seconds
+}
+
 export interface ObjectInfo {
   Key: string;
   LastModified: string;

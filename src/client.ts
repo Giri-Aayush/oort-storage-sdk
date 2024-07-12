@@ -8,7 +8,10 @@ import {
   ListObjectsV2Response,
   MultipartUploadInfo,
   CompletedPart,
+  SignedUrlOptions,
 } from './types';
+
+const MAX_EXPIRATION_TIME = 12 * 60 * 60; //12 hours in seconds
 
 export class OortStorageClient {
   private client: AxiosInstance;
@@ -53,46 +56,53 @@ export class OortStorageClient {
       Authorization: `AWS4-HMAC-SHA256 Credential=${this.config.accessKeyId}/${date}/${region}/s3/aws4_request, SignedHeaders=${Object.keys(headers).sort().join(';').toLowerCase()}, Signature=${signature}`
     };
   }
-  private getSigningKey(dateStamp: string): Buffer {
-    const kDate = createHmac('sha256', `AWS4${this.config.secretAccessKey}`).update(dateStamp).digest();
-    const kRegion = createHmac('sha256', kDate).update(this.config.region || 'us-east-1').digest();
-    const kService = createHmac('sha256', kRegion).update('s3').digest();
-    return createHmac('sha256', kService).update('aws4_request').digest();
+  getEndpoint(): string {
+    return this.endpoint;
   }
 
-  getSignedUrl(operation: string, params: Record<string, string>, expiresIn: number = 900): string {
+  async createSignedUrl(operation: 'getObject' | 'putObject', params: { Bucket: string; Key: string }, options: SignedUrlOptions): Promise<string> {
+    if (options.expiresIn <= 0) {
+      throw new Error('Expiration time must be greater than 0 seconds');
+    }
+    if (options.expiresIn > MAX_EXPIRATION_TIME) {
+      throw new Error(`Expiration time cannot exceed ${MAX_EXPIRATION_TIME} seconds (7 days)`);
+    }
+
     const timestamp = new Date();
     const dateString = timestamp.toISOString().slice(0, 8).replace(/-/g, '');
+    const amzDate = timestamp.toISOString().replace(/[:\-]|\.\d{3}/g, '');
     
     const credential = `${this.config.accessKeyId}/${dateString}/${this.config.region || 'us-east-1'}/s3/aws4_request`;
     
     const signedHeaders = 'host';
     
     const canonicalQuerystring = Object.entries({
-      ...params,
-      'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
-      'X-Amz-Credential': credential,
-      'X-Amz-Date': timestamp.toISOString().replace(/[:-]|\.\d{3}/g, ''),
-      'X-Amz-Expires': expiresIn.toString(),
-      'X-Amz-SignedHeaders': signedHeaders
-    })
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-      .join('&');
+        'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+        'X-Amz-Credential': credential,
+        'X-Amz-Date': amzDate,
+        'X-Amz-Expires': options.expiresIn.toString(),
+        'X-Amz-SignedHeaders': signedHeaders,
+        'x-id': operation === 'getObject' ? 'GetObject' : 'PutObject'
+      })
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+        .join('&');
+    
+    const canonicalHeaders = `host:${new URL(this.endpoint).host}\n`;
+    const payloadHash = 'UNSIGNED-PAYLOAD';
     
     const canonicalRequest = [
-      operation,
-      `/${params.Key || ''}`,
+      operation === 'getObject' ? 'GET' : 'PUT',
+      `/${params.Bucket}/${params.Key}`,
       canonicalQuerystring,
-      `host:${new URL(this.endpoint).host}\n`,
-      '',
+      canonicalHeaders,
       signedHeaders,
-      'UNSIGNED-PAYLOAD'
+      payloadHash
     ].join('\n');
     
     const stringToSign = [
       'AWS4-HMAC-SHA256',
-      timestamp.toISOString().replace(/[:-]|\.\d{3}/g, ''),
+      amzDate,
       `${dateString}/${this.config.region || 'us-east-1'}/s3/aws4_request`,
       createHmac('sha256', '').update(canonicalRequest).digest('hex')
     ].join('\n');
@@ -100,7 +110,60 @@ export class OortStorageClient {
     const signingKey = this.getSigningKey(dateString);
     const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
     
-    return `${this.endpoint}/${params.Key || ''}?${canonicalQuerystring}&X-Amz-Signature=${signature}`;
+    return `${this.endpoint}/${params.Bucket}/${params.Key}?${canonicalQuerystring}&X-Amz-Signature=${signature}`;
+  }
+
+  getSignedUrl(operation: string, params: Record<string, string>, expiresIn: number = 900): string {
+    const timestamp = new Date();
+    const dateString = timestamp.toISOString().slice(0, 8).replace(/-/g, '');
+    const amzDate = timestamp.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+    
+    const credential = `${this.config.accessKeyId}/${dateString}/${this.config.region || 'us-east-1'}/s3/aws4_request`;
+    
+    const signedHeaders = 'host';
+    
+    const canonicalQuerystring = Object.entries({
+      'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+      'X-Amz-Credential': credential,
+      'X-Amz-Date': amzDate,
+      'X-Amz-Expires': expiresIn.toString(),
+      'X-Amz-SignedHeaders': signedHeaders,
+      ...params
+    })
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+    
+    const canonicalHeaders = `host:${new URL(this.endpoint).host}\n`;
+    const payloadHash = 'UNSIGNED-PAYLOAD';
+    
+    const canonicalRequest = [
+      operation,
+      `/${params.Bucket}/${params.Key}`,
+      canonicalQuerystring,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash
+    ].join('\n');
+    
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      `${dateString}/${this.config.region || 'us-east-1'}/s3/aws4_request`,
+      createHmac('sha256', '').update(canonicalRequest).digest('hex')
+    ].join('\n');
+    
+    const signingKey = this.getSigningKey(dateString);
+    const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+    
+    return `${this.endpoint}/${params.Bucket}/${params.Key}?${canonicalQuerystring}&X-Amz-Signature=${signature}`;
+  }
+  
+  private getSigningKey(dateStamp: string): Buffer {
+    const kDate = createHmac('sha256', `AWS4${this.config.secretAccessKey}`).update(dateStamp).digest();
+    const kRegion = createHmac('sha256', kDate).update(this.config.region || 'us-east-1').digest();
+    const kService = createHmac('sha256', kRegion).update('s3').digest();
+    return createHmac('sha256', kService).update('aws4_request').digest();
   }
 
 
@@ -129,6 +192,7 @@ export class OortStorageClient {
       throw new Error(`OORT Storage Error: ${(error as Error).message}`);
     }
   }
+  
   async copyObject(sourceBucket: string, sourceKey: string, destBucket: string, destKey: string): Promise<void> {
     await this.request('PUT', `/${destBucket}/${destKey}`, {
       'x-amz-copy-source': `/${sourceBucket}/${sourceKey}`
@@ -157,7 +221,7 @@ export class OortStorageClient {
 
   async putObject(bucketName: string, objectKey: string, data: Buffer): Promise<void> {
     const response = await this.request('PUT', `/${bucketName}/${objectKey}`, { 'Content-Length': data.length.toString() }, data);
-    console.log('PUT object response:', response);
+    console.log('PUT object response:', response); ///////////////////////////////////////
   }
 
   async getObject(bucketName: string, objectKey: string): Promise<Buffer> {
