@@ -173,7 +173,13 @@ export class OortStorageClient {
       Host: new URL(this.endpoint).host,
       'X-Amz-Date': new Date().toISOString().replace(/[:-]|\.\d{3}/g, '')
     }, body);
-
+  
+    console.log('Sending request with the following parameters:');
+    console.log('Method:', method);
+    console.log('Path:', path);
+    console.log('Headers:', JSON.stringify(signedHeaders, null, 2));
+    console.log('Body length:', body ? body.length : 'No body');
+  
     try {
       const response = await this.client.request({
         method,
@@ -182,17 +188,25 @@ export class OortStorageClient {
         data: body,
         responseType: 'arraybuffer'
       });
-
+  
+      console.log('Response status:', response.status);
+      console.log('Response headers:', JSON.stringify(response.headers, null, 2));
+  
       if (response.headers['content-type']?.includes('xml')) {
         const parser = new XMLParser();
-        return parser.parse(response.data.toString());
+        response.data = parser.parse(response.data.toString());
       }
-      return response.data;
+      return response;
     } catch (error) {
+      console.error('Error in request:', error);
+      if (error && typeof error === 'object' && 'response' in error) {
+        console.error('Error response:', JSON.stringify((error as any).response, null, 2));
+      }
       throw new Error(`OORT Storage Error: ${(error as Error).message}`);
     }
   }
   
+
   async copyObject(sourceBucket: string, sourceKey: string, destBucket: string, destKey: string): Promise<void> {
     await this.request('PUT', `/${destBucket}/${destKey}`, {
       'x-amz-copy-source': `/${sourceBucket}/${sourceKey}`
@@ -210,14 +224,29 @@ export class OortStorageClient {
 
   async listObjectsV2(bucketName: string, prefix?: string, continuationToken?: string, maxKeys: number = 1000): Promise<ListObjectsV2Response> {
     const params = new URLSearchParams({
-      'list-type': '2',
-      ...(prefix && { prefix }),
-      ...(continuationToken && { 'continuation-token': continuationToken }),
-      'max-keys': maxKeys.toString()
+        'list-type': '2',
+        ...(prefix && { prefix }),
+        ...(continuationToken && { 'continuation-token': continuationToken }),
+        'max-keys': maxKeys.toString()
     });
     const response = await this.request('GET', `/${bucketName}?${params.toString()}`);
-    return response.ListBucketResult;
-  }
+    
+    console.log('Raw List Objects V2 API response:', response.data);
+    
+    // Parsing the response
+    const parserOptions = {
+        ignoreAttributes: false,
+        attributeNamePrefix: "",
+        parseAttributeValue: true,
+        trimValues: true
+    };
+    const parser = new XMLParser(parserOptions);
+    const parsedData = parser.parse(response.data);
+    
+    console.log('Parsed List Objects V2 response:', JSON.stringify(parsedData, null, 2));
+    
+    return parsedData.ListBucketResult;
+}
 
   async putObject(bucketName: string, objectKey: string, data: Buffer): Promise<void> {
     const response = await this.request('PUT', `/${bucketName}/${objectKey}`, { 'Content-Length': data.length.toString() }, data);
@@ -243,20 +272,30 @@ export class OortStorageClient {
   async deleteAllObjectsInBucket(bucketName: string): Promise<void> {
     let continuationToken: string | undefined;
     do {
-      const listResult = await this.listObjectsV2(bucketName, undefined, continuationToken);
-      if (listResult.Contents) {
-        const objectInfos = Array.isArray(listResult.Contents) 
-          ? listResult.Contents 
-          : [listResult.Contents];
-
+      // Add a small delay to ensure objects are registered
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+  
+      const response = await this.listObjectsV2(bucketName, undefined, continuationToken);
+      
+      console.log('List Objects V2 response:', JSON.stringify(response, null, 2));
+      
+      if (response && response.Contents) {
+        const objectInfos = Array.isArray(response.Contents) 
+          ? response.Contents 
+          : [response.Contents];
+  
         for (const objectInfo of objectInfos) {
           await this.deleteObject(bucketName, objectInfo.Key);
           console.log(`Deleted object ${objectInfo.Key} from ${bucketName}`);
         }
+      } else {
+        console.log(`No Contents found in the response for bucket ${bucketName}`);
       }
-      continuationToken = listResult.NextContinuationToken;
+      
+      continuationToken = response?.NextContinuationToken;
     } while (continuationToken);
   }
+  
 
   async deleteBucket(bucketName: string): Promise<void> {
     await this.deleteAllObjectsInBucket(bucketName);
@@ -266,21 +305,55 @@ export class OortStorageClient {
 
   async createMultipartUpload(bucketName: string, objectKey: string): Promise<MultipartUploadInfo> {
     const response = await this.request('POST', `/${bucketName}/${objectKey}?uploads`);
-    return {
-      UploadId: response.InitiateMultipartUploadResult.UploadId,
-      Key: response.InitiateMultipartUploadResult.Key
-    };
+    
+    console.log('Create Multipart Upload response:', response);
+    console.log('Parsed response data:', response.data);
+  
+    if (response.data && response.data.InitiateMultipartUploadResult) {
+      return {
+        UploadId: response.data.InitiateMultipartUploadResult.UploadId,
+        Key: response.data.InitiateMultipartUploadResult.Key
+      };
+    } else {
+      throw new Error('Failed to initiate multipart upload');
+    }
   }
+  
   async abortMultipartUpload(bucketName: string, objectKey: string, uploadId: string): Promise<void> {
     await this.request('DELETE', `/${bucketName}/${objectKey}?uploadId=${uploadId}`);
   }
 
 
   async uploadPart(bucketName: string, objectKey: string, uploadId: string, partNumber: number, data: Buffer): Promise<string> {
-    const response = await this.request('PUT', `/${bucketName}/${objectKey}?partNumber=${partNumber}&uploadId=${uploadId}`, { 'Content-Length': data.length.toString() }, data);
-    return response.headers['etag'];
+    try {
+      console.log('Sending uploadPart request with the following parameters:');
+      console.log('Bucket:', bucketName);
+      console.log('Object Key:', objectKey);
+      console.log('Upload ID:', uploadId);
+      console.log('Part Number:', partNumber);
+      console.log('Data length:', data.length);
+  
+      const response = await this.request('PUT', `/${bucketName}/${objectKey}?partNumber=${partNumber}&uploadId=${uploadId}`, { 'Content-Length': data.length.toString() }, data);
+      
+      console.log('Full response:', response.data ? JSON.stringify(response.data, null, 2) : 'No response body');
+      console.log('Response headers:', JSON.stringify(response.headers, null, 2));
+      console.log('Response status:', response.status);
+      console.log('Response statusText:', response.statusText);
+  
+      const etag = response.headers?.etag || response.headers?.ETag;
+      if (etag) {
+        return etag;
+      }
+      
+      throw new Error('Failed to get ETag from uploadPart response');
+    } catch (error) {
+      console.error('Error in uploadPart:', error);
+      if (error && typeof error === 'object' && 'response' in error) {
+        console.error('Error response:', JSON.stringify((error as any).response, null, 2));
+      }
+      throw error;
+    }
   }
-
   async uploadPartCopy(
     sourceBucket: string,
     sourceKey: string,

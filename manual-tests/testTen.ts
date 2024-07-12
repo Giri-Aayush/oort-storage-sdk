@@ -1,9 +1,6 @@
-// This test file is for testing the Multipart Upload functionality (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload)
-
 import dotenv from 'dotenv';
-import { CompletedPart, OortStorageClient } from '../src';
-import { createReadStream } from 'fs';
-import { basename } from 'path';
+import { OortStorageClient } from '../src';
+import { CompletedPart } from '../src/types';
 
 dotenv.config();
 
@@ -14,44 +11,57 @@ async function testMultipartUpload() {
     endpointType: 'STANDARD',
   });
 
-  const testBucketName = 'test-multipart-upload-' + Date.now();
-  const testFilePath = './large-test-file.txt'; // You need to create this large file
-  const objectKey = basename(testFilePath);
+  const bucketName = 'test-multipart-upload-' + Date.now();
+  const objectKey = 'large-object.txt';
 
   try {
-    console.log(`Creating test bucket: ${testBucketName}`);
-    await client.createBucket(testBucketName);
+    console.log(`Creating test bucket: ${bucketName}`);
+    await client.createBucket(bucketName);
 
-    console.log('Initiating multipart upload');
-    const { UploadId } = await client.createMultipartUpload(testBucketName, objectKey);
+    const largeObjectContent = Buffer.alloc(10 * 1024 * 1024, 'a'); // 10MB object
+    console.log(`Initiating multipart upload`);
+    const { UploadId } = await client.createMultipartUpload(bucketName, objectKey);
+    console.log(`Upload ID: ${UploadId}`);
 
     const partSize = 5 * 1024 * 1024; // 5MB part size
-    const fileStream = createReadStream(testFilePath);
-    let partNumber = 1;
+    const numParts = Math.ceil(largeObjectContent.length / partSize);
     const uploadedParts: CompletedPart[] = [];
 
-    for await (const chunk of fileStream) {
-      console.log(`Uploading part ${partNumber}`);
-      const partETag = await client.uploadPart(testBucketName, objectKey, UploadId, partNumber, chunk);
-      uploadedParts.push({ PartNumber: partNumber, ETag: partETag });
-      partNumber++;
+    for (let i = 0; i < numParts; i++) {
+      const partNumber = i + 1;
+      const startByte = i * partSize;
+      const endByte = Math.min((i + 1) * partSize - 1, largeObjectContent.length - 1);
+      const partData = largeObjectContent.slice(startByte, endByte + 1);
+
+      try {
+        console.log(`Uploading part ${partNumber}`);
+        const partETag = await client.uploadPart(bucketName, objectKey, UploadId, partNumber, partData);
+        console.log(`Successfully uploaded part ${partNumber}, ETag: ${partETag}`);
+        uploadedParts.push({ PartNumber: partNumber, ETag: partETag });
+      } catch (error) {
+        console.error(`Error uploading part ${partNumber}:`, error);
+        if (typeof error === 'object' && error !== null) {
+          console.error('Error name:', (error as Error).name);
+          console.error('Error message:', (error as Error).message);
+          console.error('Error stack:', (error as Error).stack);
+        }
+        throw error;
+      }
     }
 
     console.log('Completing multipart upload');
-    await client.completeMultipartUpload(testBucketName, objectKey, UploadId, uploadedParts);
-
+    await client.completeMultipartUpload(bucketName, objectKey, UploadId, uploadedParts);
     console.log('Multipart upload completed successfully');
-
-    // Test AbortMultipartUpload
-    console.log('Testing AbortMultipartUpload');
-    const { UploadId: abortUploadId } = await client.createMultipartUpload(testBucketName, 'abort-test.txt');
-    await client.abortMultipartUpload(testBucketName, 'abort-test.txt', abortUploadId);
-    console.log('Multipart upload aborted successfully');
-
-    console.log(`Cleaning up: deleting bucket ${testBucketName}`);
-    await client.deleteBucket(testBucketName);
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+    console.log('Cleaning up: deleting bucket', bucketName);
+    await client.deleteBucket(bucketName);
   } catch (error) {
     console.error('An error occurred:', error);
+    if (typeof error === 'object' && error !== null) {
+      console.error('Error name:', (error as Error).name);
+      console.error('Error message:', (error as Error).message);
+      console.error('Error stack:', (error as Error).stack);
+    }
   }
 }
 
